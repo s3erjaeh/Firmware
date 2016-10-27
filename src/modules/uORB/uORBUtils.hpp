@@ -34,28 +34,27 @@
 #define _uORBUtils_hpp_
 
 #include "uORBCommon.hpp"
-#include <string>
 
 namespace uORB
 {
-  class Utils;
+class Utils;
 }
 
 class uORB::Utils
 {
 public:
-  static int node_mkpath
-  (
-      char *buf,
-      Flavor f,
-      const struct orb_metadata *meta,
-      int *instance = nullptr
-  );
+	static int node_mkpath
+	(
+		char *buf,
+		Flavor f,
+		const struct orb_metadata *meta,
+		int *instance = nullptr
+	);
 
-  /**
-   * same as above except this generators the path based on the string.
-   */
-  static int node_mkpath(char *buf, Flavor f, const char *orbMsgName);
+	/**
+	 * same as above except this generators the path based on the string.
+	 */
+	static int node_mkpath(char *buf, Flavor f, const char *orbMsgName);
 
 };
 

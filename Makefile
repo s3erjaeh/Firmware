@@ -1,5 +1,6 @@
+############################################################################
 #
-#   Copyright (c) 2012-2015 PX4 Development Team. All rights reserved.
+# Copyright (c) 2015 - 2016 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,280 +29,288 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 #
+############################################################################
 
+# Enforce the presence of the GIT repository
 #
-# Top-level Makefile for building PX4 firmware images.
-#
-
-TARGETS	:= nuttx posix posix-arm qurt
-EXPLICIT_TARGET	:= $(filter $(TARGETS),$(MAKECMDGOALS))
-ifneq ($(EXPLICIT_TARGET),)
-    export PX4_TARGET_OS=$(EXPLICIT_TARGET)
-    export GOALS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+# We depend on our submodules, so we have to prevent attempts to
+# compile without it being present.
+ifeq ($(wildcard .git),)
+    $(error YOU HAVE TO USE GIT TO DOWNLOAD THIS REPOSITORY. ABORTING.)
 endif
 
-#
-# Get path and tool configuration
-#
-export PX4_BASE		 := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))/
-include $(PX4_BASE)makefiles/setup.mk
-
-#
-# Get a version string provided by git
-# This assumes that git command is available and that
-# the directory holding this file also contains .git directory
-#
-GIT_DESC := $(shell git log -1 --pretty=format:%H)
-ifneq ($(words $(GIT_DESC)),1)
-    GIT_DESC := "unknown_git_version"
+CMAKE_VER := $(shell Tools/check_cmake.sh; echo $$?)
+ifneq ($(CMAKE_VER),0)
+    $(warning Not a valid CMake version or CMake not installed.)
+    $(warning On Ubuntu 16.04, install or upgrade via:)
+    $(warning )
+    $(warning 3rd party PPA:)
+    $(warning sudo add-apt-repository ppa:george-edison55/cmake-3.x -y)
+    $(warning sudo apt-get update)
+    $(warning sudo apt-get install cmake)
+    $(warning )
+    $(warning Official website:)
+    $(warning wget https://cmake.org/files/v3.4/cmake-3.4.3-Linux-x86_64.sh)
+    $(warning chmod +x cmake-3.4.3-Linux-x86_64.sh)
+    $(warning sudo mkdir /opt/cmake-3.4.3)
+    $(warning sudo ./cmake-3.4.3-Linux-x86_64.sh --prefix=/opt/cmake-3.4.3 --exclude-subdir)
+    $(warning export PATH=/opt/cmake-3.4.3/bin:$$PATH)
+    $(warning )
+    $(error Fatal)
 endif
 
-GIT_DESC_SHORT := $(shell echo $(GIT_DESC) | cut -c1-16)
+# Help
+# --------------------------------------------------------------------
+# Don't be afraid of this makefile, it is just passing
+# arguments to cmake to allow us to keep the wiki pages etc.
+# that describe how to build the px4 firmware
+# the same even when using cmake instead of make.
+#
+# Example usage:
+#
+# make px4fmu-v2_default 			(builds)
+# make px4fmu-v2_default upload 	(builds and uploads)
+# make px4fmu-v2_default test 		(builds and tests)
+#
+# This tells cmake to build the nuttx px4fmu-v2 default config in the
+# directory build_nuttx_px4fmu-v2_default and then call make
+# in that directory with the target upload.
 
-#
-# Canned firmware configurations that we (know how to) build.
-#
-KNOWN_CONFIGS		:= $(subst config_,,$(basename $(notdir $(wildcard $(PX4_MK_DIR)/$(PX4_TARGET_OS)/config_*.mk))))
-CONFIGS			?= $(KNOWN_CONFIGS)
+#  explicity set default build target
+all: posix_sitl_default
 
-#
-# Boards that we (know how to) build NuttX export kits for.
-#
-KNOWN_BOARDS		:= $(subst board_,,$(basename $(notdir $(wildcard $(PX4_MK_DIR)/$(PX4_TARGET_OS)/board_*.mk))))
-BOARDS			?= $(KNOWN_BOARDS)
+# Parsing
+# --------------------------------------------------------------------
+# assume 1st argument passed is the main target, the
+# rest are arguments to pass to the makefile generated
+# by cmake in the subdirectory
+FIRST_ARG := $(firstword $(MAKECMDGOALS))
+ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+j ?= 4
 
-#
-# Debugging
-#
-MQUIET			 = --no-print-directory
-#MQUIET			 = --print-directory
-
-################################################################################
-# No user-serviceable parts below
-################################################################################
-
-#
-# If the user has listed a config as a target, strip it out and override CONFIGS.
-#
-FIRMWARE_GOAL		 = firmware
-EXPLICIT_CONFIGS	:= $(filter $(CONFIGS),$(MAKECMDGOALS))
-ifneq ($(EXPLICIT_CONFIGS),)
-CONFIGS			:= $(EXPLICIT_CONFIGS)
-.PHONY:			$(EXPLICIT_CONFIGS)
-$(EXPLICIT_CONFIGS):	all
-
-#
-# If the user has asked to upload, they must have also specified exactly one
-# config.
-#
-ifneq ($(filter upload,$(MAKECMDGOALS)),)
-ifneq ($(words $(EXPLICIT_CONFIGS)),1)
-$(error In order to upload, exactly one board config must be specified)
+ifndef NO_NINJA_BUILD
+NINJA_BUILD := $(shell ninja --version 2>/dev/null)
 endif
-FIRMWARE_GOAL		 = upload
-.PHONY: upload
-upload:
-	@:
-endif
-endif
-
-ifeq ($(PX4_TARGET_OS),nuttx)
-include $(PX4_BASE)makefiles/nuttx/firmware_nuttx.mk
-endif
-ifeq ($(PX4_TARGET_OS),posix)
-include $(PX4_BASE)makefiles/posix/firmware_posix.mk
-endif
-ifeq ($(PX4_TARGET_OS),posix-arm)
-include $(PX4_BASE)makefiles/posix/firmware_posix.mk
-endif
-ifeq ($(PX4_TARGET_OS),qurt)
-include $(PX4_BASE)makefiles/qurt/firmware_qurt.mk
-endif
-
-qurt_fixup:
-	makefiles/qurt/setup.sh $(PX4_BASE)
-
-restore:
-	cd src/lib/eigen && git checkout .
-	git submodule update
-	
-#
-# Versioning
-#
-
-GIT_VER_FILE = $(PX4_VERSIONING_DIR).build_git_ver
-GIT_HEADER_FILE = $(PX4_VERSIONING_DIR)build_git_version.h
-
-$(GIT_VER_FILE) :
-	$(Q) if [ ! -f $(GIT_VER_FILE) ]; then \
-		$(MKDIR) -p $(PX4_VERSIONING_DIR); \
-		$(ECHO) "" > $(GIT_VER_FILE); \
-	fi
-
-.PHONY: checkgitversion
-checkgitversion: $(GIT_VER_FILE)
-	$(Q) if [ "$(GIT_DESC)" != "$(shell cat $(GIT_VER_FILE))" ]; then \
-		$(ECHO) "/* Auto Magically Generated file */" > $(GIT_HEADER_FILE); \
-		$(ECHO) "/* Do not edit! */" >> $(GIT_HEADER_FILE); \
-		$(ECHO) "#define PX4_GIT_VERSION_STR  \"$(GIT_DESC)\"" >> $(GIT_HEADER_FILE); \
-		$(ECHO) "#define PX4_GIT_VERSION_BINARY 0x$(GIT_DESC_SHORT)" >> $(GIT_HEADER_FILE); \
-		$(ECHO) $(GIT_DESC) > $(GIT_VER_FILE); \
-	fi
-#
-# Sizes
-#
-
-.PHONY: size
-size:
-	$(Q) for elfs in Build/*; do if [ -f  $$elfs/firmware.elf ]; then  $(SIZE) $$elfs/firmware.elf; fi done
-
-
-#
-# Submodule Checks
-#
-
-.PHONY: checksubmodules
-checksubmodules:
-	$(Q) ($(PX4_BASE)/Tools/check_submodules.sh $(PX4_TARGET_OS))
-
-.PHONY: updatesubmodules
-updatesubmodules:
-	$(Q) (git submodule init)
-	$(Q) (git submodule update)
-
-MSG_DIR = $(PX4_BASE)msg
-UORB_TEMPLATE_DIR = $(PX4_BASE)msg/templates/uorb
-MULTIPLATFORM_TEMPLATE_DIR = $(PX4_BASE)msg/templates/px4/uorb
-TOPICS_DIR = $(PX4_BASE)src/modules/uORB/topics
-MULTIPLATFORM_HEADER_DIR = $(PX4_BASE)src/platforms/$(PX4_TARGET_OS)/px4_messages
-MULTIPLATFORM_PREFIX = px4_
-TOPICHEADER_TEMP_DIR = $(BUILD_DIR)topics_temporary
-MULTI_TOPICHEADER_TEMP_DIR = $(BUILD_DIR)multi_topics_temporary
-GENMSG_PYTHONPATH = $(PX4_BASE)Tools/genmsg/src
-GENCPP_PYTHONPATH = $(PX4_BASE)Tools/gencpp/src
-
-.PHONY: generateuorbtopicheaders
-generateuorbtopicheaders: checksubmodules
-	@$(ECHO) "Generating uORB topic headers"
-	$(Q) (PYTHONPATH=$(GENMSG_PYTHONPATH):$(GENCPP_PYTHONPATH):$(PYTHONPATH) $(PYTHON) \
-		$(PX4_BASE)Tools/px_generate_uorb_topic_headers.py \
-		-d $(MSG_DIR) -o $(TOPICS_DIR) -e $(UORB_TEMPLATE_DIR) -t $(TOPICHEADER_TEMP_DIR))
-	@$(ECHO) "Generating multiplatform uORB topic wrapper headers"
-	$(Q) (PYTHONPATH=$(GENMSG_PYTHONPATH):$(GENCPP_PYTHONPATH):$(PYTHONPATH) $(PYTHON) \
-		$(PX4_BASE)Tools/px_generate_uorb_topic_headers.py \
-		-d $(MSG_DIR) -o $(MULTIPLATFORM_HEADER_DIR) -e $(MULTIPLATFORM_TEMPLATE_DIR) -t $(MULTI_TOPICHEADER_TEMP_DIR) -p $(MULTIPLATFORM_PREFIX))
-
-#
-# Testing targets
-#
-testbuild:
-	$(Q) (cd $(PX4_BASE) && $(MAKE) distclean && $(MAKE) archives && $(MAKE) -j8)
-	$(Q) (zip -r Firmware.zip $(PX4_BASE)/Images)
-
-nuttx posix posix-arm qurt: 
-ifeq ($(GOALS),)
-	$(MAKE) PX4_TARGET_OS=$@ $(GOALS)
+ifdef NINJA_BUILD
+    PX4_CMAKE_GENERATOR ?= "Ninja"
+    PX4_MAKE = ninja
+    PX4_MAKE_ARGS =
 else
-	export PX4_TARGET_OS=$@
+
+ifdef SYSTEMROOT
+	# Windows
+	PX4_CMAKE_GENERATOR ?= "MSYS Makefiles"
+else
+	PX4_CMAKE_GENERATOR ?= "Unix Makefiles"
+endif
+    PX4_MAKE = $(MAKE)
+    PX4_MAKE_ARGS = -j$(j) --no-print-directory
 endif
 
-sitl_quad:
-	$(Q) Tools/sitl_run.sh posix-configs/SITL/init/rcS
-sitl_quad_gazebo:
-	$(Q) Tools/sitl_run.sh posix-configs/SITL/init/rc_iris_ros
-sitl_plane:
-	$(Q) Tools/sitl_run.sh posix-configs/SITL/init/rc.fixed_wing
+# check if replay env variable is set & set build dir accordingly
+ifdef replay
+	BUILD_DIR_SUFFIX := _replay
+else
+	BUILD_DIR_SUFFIX :=
+endif
 
-qurtrun:
-	$(MAKE) PX4_TARGET_OS=qurt sim
+# additional config parameters passed to cmake
+CMAKE_ARGS :=
+ifdef EXTERNAL_MODULES_LOCATION
+	CMAKE_ARGS := -DEXTERNAL_MODULES_LOCATION:STRING=$(EXTERNAL_MODULES_LOCATION)
+endif
 
-#
-# Unittest targets. Builds and runs the host-level
-# unit tests.
-.PHONY: tests
-tests:	generateuorbtopicheaders
-	$(Q) (mkdir -p $(PX4_BASE)/unittests/build && cd $(PX4_BASE)/unittests/build && cmake .. && $(MAKE) --no-print-directory unittests)
+SRC_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: check_format
+# Functions
+# --------------------------------------------------------------------
+# describe how to build a cmake config
+define cmake-build
++@$(eval BUILD_DIR = $(SRC_DIR)/build_$@$(BUILD_DIR_SUFFIX))
++@if [ $(PX4_CMAKE_GENERATOR) = "Ninja" ] && [ -e $(BUILD_DIR)/Makefile ]; then rm -rf $(BUILD_DIR); fi
++@if [ ! -e $(BUILD_DIR)/CMakeCache.txt ]; then mkdir -p $(BUILD_DIR) && cd $(BUILD_DIR) && cmake .. -G$(PX4_CMAKE_GENERATOR) -DCONFIG=$(1) $(CMAKE_ARGS) || (cd .. && rm -rf $(BUILD_DIR)); fi
++@echo "PX4 CONFIG: $(BUILD_DIR)"
++@$(PX4_MAKE) -C "$(BUILD_DIR)" $(PX4_MAKE_ARGS) $(ARGS)
+endef
+
+define cmake-build-other
++@$(eval BUILD_DIR = $(SRC_DIR)/build_$@$(BUILD_DIR_SUFFIX))
++@if [ $(PX4_CMAKE_GENERATOR) = "Ninja" ] && [ -e $(BUILD_DIR)/Makefile ]; then rm -rf $(BUILD_DIR); fi
++@if [ ! -e $(BUILD_DIR)/CMakeCache.txt ]; then mkdir -p $(BUILD_DIR) && cd $(BUILD_DIR) && cmake $(2) -G$(PX4_CMAKE_GENERATOR) -DCONFIG=$(1) || (cd .. && rm -rf $(BUILD_DIR)); fi
++@$(PX4_MAKE) -C "$(BUILD_DIR)" $(PX4_MAKE_ARGS) $(ARGS)
+endef
+
+define colorecho
+      @tput setaf 6
+      @echo $1
+      @tput sgr0
+endef
+
+# Get a list of all config targets.
+ALL_CONFIG_TARGETS := $(basename $(shell find "$(SRC_DIR)/cmake/configs" -name '*.cmake' -print | sed  -e 's:^.*/::' | sort))
+# Strip off leading nuttx_
+NUTTX_CONFIG_TARGETS := $(patsubst nuttx_%,%,$(filter nuttx_%,$(ALL_CONFIG_TARGETS)))
+
+# ADD CONFIGS HERE
+# --------------------------------------------------------------------
+#  Do not put any spaces between function arguments.
+
+# All targets.
+$(ALL_CONFIG_TARGETS):
+	$(call cmake-build,$@)
+
+# Abbreviated config targets.
+
+# nuttx_ is left off by default; provide a rule to allow that.
+$(NUTTX_CONFIG_TARGETS):
+	$(call cmake-build,nuttx_$@)
+
+all_nuttx_targets: $(NUTTX_CONFIG_TARGETS)
+
+posix: posix_sitl_default
+broadcast: posix_sitl_broadcast
+
+# Multi- config targets.
+
+eagle_default: posix_eagle_default qurt_eagle_default
+eagle_legacy_default: posix_eagle_legacy_driver_default qurt_eagle_legacy_driver_default
+excelsior_default: posix_excelsior_default qurt_excelsior_default
+
+# Deprecated config targets.
+
+ros_sitl_default:
+	@echo "This target is deprecated. Use make 'posix_sitl_default gazebo' instead."
+
+_sitl_deprecation:
+	@echo "Deprecated. Use 'make posix_sitl_default jmavsim' or"
+	@echo "'make posix_sitl_default gazebo' if Gazebo is preferred."
+
+run_sitl_quad: _sitl_deprecation
+run_sitl_plane: _sitl_deprecation
+run_sitl_ros: _sitl_deprecation
+
+# All targets with just dependencies but no recipe must either be marked as phony (or have the special @: as recipe).
+.PHONY: all posix broadcast eagle_default eagle_legacy_default excelsior_default run_sitl_quad run_sitl_plane run_sitl_ros all_nuttx_targets
+
+# Other targets
+# --------------------------------------------------------------------
+
+.PHONY: uavcan_firmware check check_format format unittest tests qgc_firmware package_firmware clean submodulesclean distclean
+.NOTPARALLEL:
+
+# All targets with just dependencies but no recipe must either be marked as phony (or have the special @: as recipe).
+.PHONY: checks_defaults checks_bootloaders checks_tests checks_alts checks_uavcan checks_sitls checks_last quick_check tests extra_firmware
+
+uavcan_firmware:
+ifeq ($(VECTORCONTROL),1)
+	$(call colorecho,"Downloading and building Vector control (FOC) firmware for the S2740VC and PX4ESC 1.6")
+	@(rm -rf vectorcontrol && git clone --quiet --depth 1 https://github.com/thiemar/vectorcontrol.git && cd vectorcontrol && BOARD=s2740vc_1_0 make --silent --no-print-directory && BOARD=px4esc_1_6 make --silent --no-print-directory && ../Tools/uavcan_copy.sh)
+endif
+
+check_px4fmu-v4_default: uavcan_firmware
+check_px4fmu-v4_default_and_uavcan: check_px4fmu-v4_default
+	@echo
+ifeq ($(VECTORCONTROL),1)
+	@echo "Cleaning up vectorcontrol firmware"
+	@rm -rf vectorcontrol
+	@rm -rf ROMFS/px4fmu_common/uavcan
+endif
+
+# All default targets that don't require a special build environment (currently built on semaphore-ci)
+check: 	check_px4fmu-v1_default \
+	check_px4fmu-v2_default \
+	check_px4fmu-v2_test \
+	check_px4fmu-v4_default_and_uavcan \
+	check_mindpx-v2_default \
+	check_posix_sitl_default \
+	check_tap-v1_default \
+	check_asc-v1_default \
+	check_px4-stm32f4discovery_default \
+	check_crazyflie_default \
+	check_tests \
+	check_format
+
+# quick_check builds a single nuttx and posix target, runs testing, and checks the style
+quick_check: check_posix_sitl_default check_px4fmu-v4_default check_tests check_format
+
 check_format:
-	$(Q) (./Tools/check_code_style.sh)
+	$(call colorecho,"Checking formatting with astyle")
+	@./Tools/check_code_style_all.sh
+	@git diff --check
 
-#
-# Cleanup targets.  'clean' should remove all built products and force
-# a complete re-compilation, 'distclean' should remove everything
-# that's generated leaving only files that are in source control.
-#
-.PHONY:	clean
+format:
+	$(call colorecho,"Formatting with astyle")
+	@./Tools/check_code_style_all.sh --fix
+
+check_%:
+	@echo
+	$(call colorecho,"Building" $(subst check_,,$@))
+	@$(MAKE) --no-print-directory $(subst check_,,$@)
+	@echo
+
+unittest: posix_sitl_default
+	$(call cmake-build-other,unittest, ../unittests)
+	@(cd build_unittest && ctest -j2 --output-on-failure)
+
+run_tests_posix: posix_sitl_default
+	@(cd build_posix_sitl_default/ && ctest -V)
+
+tests: check_unittest run_tests_posix
+
+# QGroundControl flashable firmware (currently built by travis-ci)
+qgc_firmware: \
+	check_px4fmu-v1_default \
+	check_px4fmu-v2_default \
+	check_mindpx-v2_default \
+	check_tap-v1_default \
+	check_px4fmu-v4_default_and_uavcan \
+	check_format
+
+package_firmware:
+	@zip --junk-paths Firmware.zip `find . -name \*.px4`
+
 clean:
-	@echo > /dev/null
-	$(Q) $(RMDIR) $(BUILD_DIR)*.build
-	$(Q) $(RMDIR) $(PX4_VERSIONING_DIR)
-	$(Q) $(REMOVE) $(IMAGE_DIR)*.px4
-	$(Q) $(RMDIR) $(TOPICHEADER_TEMP_DIR)
-	$(Q) $(RMDIR) $(MULTI_TOPICHEADER_TEMP_DIR)
+	@rm -rf build_*/
+	-@$(MAKE) -C NuttX/nuttx clean
 
-.PHONY:	distclean
-distclean: clean
-	@echo > /dev/null
-	$(Q) $(REMOVE) $(ARCHIVE_DIR)*.export
-	$(Q) $(MAKE) -C $(NUTTX_SRC) -r $(MQUIET) distclean
-	$(Q) (cd $(NUTTX_SRC)/configs && $(FIND) . -maxdepth 1 -type l -delete)
+submodulesclean:
+	@git submodule sync --recursive
+	@git submodule deinit -f .
+	@git submodule update --init --recursive --force
 
-#
-# Print some help text
-#
-.PHONY: help
+distclean: submodulesclean clean
+	@git clean -ff -x -d -e ".project" -e ".cproject"
+
+# All other targets are handled by PX4_MAKE. Add a rule here to avoid printing an error.
+%:
+	$(if $(filter $(FIRST_ARG),$@), \
+		$(error "$@ cannot be the first argument. Use '$(MAKE) help|list_config_targets' to get a list of all possible [configuration] targets."),@#)
+
+.PHONY: clean
+
+CONFIGS:=$(shell ls cmake/configs | sed -e "s~.*/~~" | sed -e "s~\..*~~")
+
+#help:
+#	@echo
+#	@echo "Type 'make ' and hit the tab key twice to see a list of the available"
+#	@echo "build configurations."
+#	@echo
+
+empty :=
+space := $(empty) $(empty)
+
+# Print a list of non-config targets (based on http://stackoverflow.com/a/26339924/1487069)
 help:
-	@$(ECHO) ""
-	@$(ECHO) " PX4 firmware builder"
-	@$(ECHO) " ===================="
-	@$(ECHO) ""
-	@$(ECHO) "  Available targets:"
-	@$(ECHO) "  ------------------"
-	@$(ECHO) ""
-ifeq ($(PX4_TARGET_OS),nuttx)
-	@$(ECHO) "  archives"
-	@$(ECHO) "    Build the NuttX RTOS archives that are used by the firmware build."
-	@$(ECHO) ""
-endif
-	@$(ECHO) "  all"
-	@$(ECHO) "    Build all firmware configs: $(CONFIGS)"
-	@$(ECHO) "    A limited set of configs can be built with CONFIGS=<list-of-configs>"
-	@$(ECHO) ""
-	@for config in $(CONFIGS); do \
-		$(ECHO) "  $$config"; \
-		$(ECHO) "    Build just the $$config firmware configuration."; \
-		$(ECHO) ""; \
-	done
-	@$(ECHO) "  clean"
-	@$(ECHO) "    Remove all firmware build pieces."
-	@$(ECHO) ""
-ifeq ($(PX4_TARGET_OS),nuttx)
-	@$(ECHO) "  distclean"
-	@$(ECHO) "    Remove all compilation products, including NuttX RTOS archives."
-	@$(ECHO) ""
-	@$(ECHO) "  upload"
-	@$(ECHO) "    When exactly one config is being built, add this target to upload the"
-	@$(ECHO) "    firmware to the board when the build is complete. Not supported for"
-	@$(ECHO) "    all configurations."
-	@$(ECHO) ""
-endif
-	@$(ECHO) "  testbuild"
-	@$(ECHO) "    Perform a complete clean build of the entire tree."
-	@$(ECHO) ""
-	@$(ECHO) "  Common options:"
-	@$(ECHO) "  ---------------"
-	@$(ECHO) ""
-	@$(ECHO) "  V=1"
-	@$(ECHO) "    If V is set, more verbose output is printed during the build. This can"
-	@$(ECHO) "    help when diagnosing issues with the build or toolchain."
-	@$(ECHO) ""
-ifeq ($(PX4_TARGET_OS),nuttx)
-	@$(ECHO) "  To see help for a specifix target use 'make <target> help' where target is"
-	@$(ECHO) "  one of: "
-	@$(ECHO) "     nuttx"
-	@$(ECHO) "     posix"
-	@$(ECHO) "     qurt"
-	@$(ECHO) ""
-endif
+	@echo "Usage: $(MAKE) <target>"
+	@echo "Where <target> is one of:"
+	@$(MAKE) -pRrq -f $(lastword $(MAKEFILE_LIST)) : 2>/dev/null | \
+		awk -v RS= -F: '/^# File/,/^# Finished Make data base/ {if ($$1 !~ "^[#.]") {print $$1}}' | sort | \
+		egrep -v -e '^[^[:alnum:]]' -e '^($(subst $(space),|,$(ALL_CONFIG_TARGETS) $(NUTTX_CONFIG_TARGETS)))$$' -e '_default$$' -e '^(posix|eagle|Makefile)'
+	@echo
+	@echo "Or, $(MAKE) <config_target> [<make_target(s)>]"
+	@echo "Use '$(MAKE) list_config_targets' for a list of configuration targets."
+
+# Print a list of all config targets.
+list_config_targets:
+	@for targ in $(patsubst nuttx_%,[nuttx_]%,$(ALL_CONFIG_TARGETS)); do echo $$targ; done
 

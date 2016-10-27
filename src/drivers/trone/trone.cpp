@@ -39,6 +39,7 @@
  */
 
 #include <px4_config.h>
+#include <px4_defines.h>
 
 #include <drivers/device/i2c.h>
 
@@ -89,12 +90,6 @@
 #define TRONE_MAX_DISTANCE (14.00f)
 
 #define TRONE_CONVERSION_INTERVAL 50000 /* 50ms */
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-static const int ERROR = -1;
 
 #ifndef CONFIG_SCHED_WORKQUEUE
 # error This requires CONFIG_SCHED_WORKQUEUE.
@@ -212,7 +207,8 @@ static const uint8_t crc_table[] = {
 	0xfa, 0xfd, 0xf4, 0xf3
 };
 
- static uint8_t crc8(uint8_t *p, uint8_t len) {
+static uint8_t crc8(uint8_t *p, uint8_t len)
+{
 	uint16_t i;
 	uint16_t crc = 0x0;
 
@@ -241,9 +237,9 @@ TRONE::TRONE(int bus, int address) :
 	_class_instance(-1),
 	_orb_class_instance(-1),
 	_distance_sensor_topic(nullptr),
-	_sample_perf(perf_alloc(PC_ELAPSED, "trone_read")),
-	_comms_errors(perf_alloc(PC_COUNT, "trone_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "trone_buffer_overflows"))
+	_sample_perf(perf_alloc(PC_ELAPSED, "tr1_read")),
+	_comms_errors(perf_alloc(PC_COUNT, "tr1_com_err")),
+	_buffer_overflows(perf_alloc(PC_COUNT, "tr1_buf_of"))
 {
 	// up the retries since the device misses the first measure attempts
 	I2C::_retries = 3;
@@ -278,7 +274,7 @@ TRONE::~TRONE()
 int
 TRONE::init()
 {
-	int ret = ERROR;
+	int ret = PX4_ERROR;
 
 	/* do I2C init (and probe) first */
 	if (I2C::init() != OK) {
@@ -301,7 +297,7 @@ TRONE::init()
 		_reports->get(&ds_report);
 
 		_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
-							     &_orb_class_instance, ORB_PRIO_LOW);
+					 &_orb_class_instance, ORB_PRIO_LOW);
 
 		if (_distance_sensor_topic == nullptr) {
 			DEVICE_LOG("failed to create distance_sensor object. Did you start uOrb?");
@@ -318,23 +314,23 @@ out:
 int
 TRONE::probe()
 {
-	uint8_t who_am_i=0;
+	uint8_t who_am_i = 0;
 
 	const uint8_t cmd = TRONE_WHO_AM_I_REG;
-    
-    // set the I2C bus address
-    set_address(TRONE_BASEADDR);
-        
-    // can't use a single transfer as TROne need a bit of time for internal processing
+
+	// set the I2C bus address
+	set_address(TRONE_BASEADDR);
+
+	// can't use a single transfer as TROne need a bit of time for internal processing
 	if (transfer(&cmd, 1, nullptr, 0) == OK) {
-        if ( transfer(nullptr, 0, &who_am_i, 1) == OK && who_am_i == TRONE_WHO_AM_I_REG_VAL){
-            return measure();
-        }
-	}     
+		if (transfer(nullptr, 0, &who_am_i, 1) == OK && who_am_i == TRONE_WHO_AM_I_REG_VAL) {
+			return measure();
+		}
+	}
 
 	DEVICE_DEBUG("WHO_AM_I byte mismatch 0x%02x should be 0x%02x\n",
-		(unsigned)who_am_i,
-		TRONE_WHO_AM_I_REG_VAL);
+		     (unsigned)who_am_i,
+		     TRONE_WHO_AM_I_REG_VAL);
 
 	// not found on any address
 	return -EIO;
@@ -441,14 +437,14 @@ TRONE::ioctl(struct file *filp, int cmd, unsigned long arg)
 				return -EINVAL;
 			}
 
-			irqstate_t flags = irqsave();
+			irqstate_t flags = px4_enter_critical_section();
 
 			if (!_reports->resize(arg)) {
-				irqrestore(flags);
+				px4_leave_critical_section(flags);
 				return -ENOMEM;
 			}
 
-			irqrestore(flags);
+			px4_leave_critical_section(flags);
 
 			return OK;
 		}
@@ -596,7 +592,7 @@ TRONE::collect()
 
 	// This validation check can be used later
 	_valid = crc8(val, 2) == val[2] && (float)report.current_distance > report.min_distance
-		&& (float)report.current_distance < report.max_distance ? 1 : 0;
+		 && (float)report.current_distance < report.max_distance ? 1 : 0;
 
 	/* publish it, if we are the primary */
 	if (_distance_sensor_topic != nullptr) {
@@ -627,12 +623,12 @@ TRONE::start()
 	work_queue(HPWORK, &_work, (worker_t)&TRONE::cycle_trampoline, this, 1);
 
 	/* notify about state change */
-	struct subsystem_info_s info = {
-		true,
-		true,
-		true,
-		subsystem_info_s::SUBSYSTEM_TYPE_RANGEFINDER
-	};
+	struct subsystem_info_s info = {};
+	info.present = true;
+	info.enabled = true;
+	info.ok = true;
+	info.subsystem_type = subsystem_info_s::SUBSYSTEM_TYPE_RANGEFINDER;
+
 	static orb_advert_t pub = nullptr;
 
 	if (pub != nullptr) {
@@ -680,10 +676,10 @@ TRONE::cycle()
 		if (_measure_ticks > USEC2TICK(TRONE_CONVERSION_INTERVAL)) {
 			/* schedule a fresh cycle call when we are ready to measure again */
 			work_queue(HPWORK,
-				&_work,
-				(worker_t)&TRONE::cycle_trampoline,
-				this,
-				_measure_ticks - USEC2TICK(TRONE_CONVERSION_INTERVAL));
+				   &_work,
+				   (worker_t)&TRONE::cycle_trampoline,
+				   this,
+				   _measure_ticks - USEC2TICK(TRONE_CONVERSION_INTERVAL));
 
 			return;
 		}
@@ -699,10 +695,10 @@ TRONE::cycle()
 
 	/* schedule a fresh cycle call when the measurement is done */
 	work_queue(HPWORK,
-		&_work,
-		(worker_t)&TRONE::cycle_trampoline,
-		this,
-		USEC2TICK(TRONE_CONVERSION_INTERVAL));
+		   &_work,
+		   (worker_t)&TRONE::cycle_trampoline,
+		   this,
+		   USEC2TICK(TRONE_CONVERSION_INTERVAL));
 }
 
 void
@@ -720,12 +716,6 @@ TRONE::print_info()
  */
 namespace trone
 {
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-const int ERROR = -1;
 
 TRONE	*g_dev;
 

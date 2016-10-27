@@ -80,9 +80,14 @@ int mtd_main(int argc, char *argv[])
 static void	ramtron_attach(void);
 #else
 
-#ifndef PX4_I2C_BUS_ONBOARD
-#  error PX4_I2C_BUS_ONBOARD not defined, cannot locate onboard EEPROM
+#ifndef PX4_I2C_BUS_MTD
+#  ifdef PX4_I2C_BUS_ONBOARD
+#    define PX4_I2C_BUS_MTD PX4_I2C_BUS_ONBOARD
+#  else
+#    error PX4_I2C_BUS_MTD and PX4_I2C_BUS_ONBOARD not defined, cannot locate onboard EEPROM
+#  endif
 #endif
+
 
 static void	at24xxx_attach(void);
 #endif
@@ -176,12 +181,9 @@ struct mtd_dev_s *mtd_partition(FAR struct mtd_dev_s *mtd,
 static void
 ramtron_attach(void)
 {
-	/* find the right spi */
-#ifdef CONFIG_ARCH_BOARD_AEROCORE
-	struct spi_dev_s *spi = up_spiinitialize(4);
-#else
-	struct spi_dev_s *spi = up_spiinitialize(2);
-#endif
+	/* initialize the right spi */
+	struct spi_dev_s *spi = px4_spibus_initialize(PX4_SPI_BUS_RAMTRON);
+
 	/* this resets the spi bus, set correct bus speed again */
 	SPI_SETFREQUENCY(spi, 10 * 1000 * 1000);
 	SPI_SETBITS(spi, 8);
@@ -228,7 +230,7 @@ static void
 at24xxx_attach(void)
 {
 	/* find the right I2C */
-	struct i2c_dev_s *i2c = up_i2cinitialize(PX4_I2C_BUS_ONBOARD);
+	struct i2c_dev_s *i2c = px4_i2cbus_initialize(PX4_I2C_BUS_MTD);
 	/* this resets the I2C bus, set correct bus speed again */
 	I2C_SETFREQUENCY(i2c, 400000);
 
@@ -269,10 +271,10 @@ mtd_start(char *partition_names[], unsigned n_partitions)
 	}
 
 	if (!attached) {
-#ifdef CONFIG_ARCH_BOARD_PX4FMU_V1
-		at24xxx_attach();
-#else
+#ifdef CONFIG_MTD_RAMTRON
 		ramtron_attach();
+#else
+		at24xxx_attach();
 #endif
 	}
 

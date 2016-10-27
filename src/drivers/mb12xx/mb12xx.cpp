@@ -92,13 +92,6 @@
 #define MB12XX_CONVERSION_INTERVAL 	100000 /* 60ms for one sonar */
 #define TICKS_BETWEEN_SUCCESIVE_FIRES 	100000 /* 30ms between each sonar measurement (watch out for interference!) */
 
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-static const int ERROR = -1;
-
 #ifndef CONFIG_SCHED_WORKQUEUE
 # error This requires CONFIG_SCHED_WORKQUEUE.
 #endif
@@ -143,7 +136,8 @@ private:
 	int					_cycling_rate;	/* */
 	uint8_t				_index_counter;	/* temporary sonar i2c address */
 	std::vector<uint8_t>	addr_ind; 	/* temp sonar i2c address vector */
-	std::vector<float>	_latest_sonar_measurements; /* vector to store latest sonar measurements in before writing to report */
+	std::vector<float>
+	_latest_sonar_measurements; /* vector to store latest sonar measurements in before writing to report */
 
 
 	/**
@@ -213,8 +207,8 @@ MB12XX::MB12XX(int bus, int address) :
 	_orb_class_instance(-1),
 	_distance_sensor_topic(nullptr),
 	_sample_perf(perf_alloc(PC_ELAPSED, "mb12xx_read")),
-	_comms_errors(perf_alloc(PC_COUNT, "mb12xx_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "mb12xx_buffer_overflows")),
+	_comms_errors(perf_alloc(PC_COUNT, "mb12xx_com_err")),
+	_buffer_overflows(perf_alloc(PC_COUNT, "mb12xx_buf_of")),
 	_cycle_counter(0),	/* initialising counter for cycling function to zero */
 	_cycling_rate(0),	/* initialising cycling rate (which can differ depending on one sonar or multiple) */
 	_index_counter(0) 	/* initialising temp sonar i2c address to zero */
@@ -250,11 +244,11 @@ MB12XX::~MB12XX()
 int
 MB12XX::init()
 {
-	int ret = ERROR;
+	int ret = PX4_ERROR;
 
 	/* do I2C init (and probe) first */
 	if (I2C::init() != OK) {
-		goto out;
+		return ret;
 	}
 
 	/* allocate basic report buffers */
@@ -264,21 +258,19 @@ MB12XX::init()
 	set_address(_index_counter);		/* set I2c port to temp sonar i2c adress */
 
 	if (_reports == nullptr) {
-		goto out;
+		return ret;
 	}
 
 	_class_instance = register_class_devname(RANGE_FINDER_BASE_DEVICE_PATH);
 
-	if (_class_instance == CLASS_DEVICE_PRIMARY) {
-		/* get a publish handle on the range finder topic */
-		struct distance_sensor_s ds_report = {};
+	/* get a publish handle on the range finder topic */
+	struct distance_sensor_s ds_report = {};
 
-		_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
-							     &_orb_class_instance, ORB_PRIO_LOW);
+	_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
+				 &_orb_class_instance, ORB_PRIO_LOW);
 
-		if (_distance_sensor_topic == nullptr) {
-			DEVICE_LOG("failed to create distance_sensor object. Did you start uOrb?");
-		}
+	if (_distance_sensor_topic == nullptr) {
+		DEVICE_LOG("failed to create distance_sensor object. Did you start uOrb?");
 	}
 
 	// XXX we should find out why we need to wait 200 ms here
@@ -320,7 +312,7 @@ MB12XX::init()
 	ret = OK;
 	/* sensor is ok, but we don't really know if it is within range */
 	_sensor_ok = true;
-out:
+
 	return ret;
 }
 
@@ -432,14 +424,14 @@ MB12XX::ioctl(struct file *filp, int cmd, unsigned long arg)
 				return -EINVAL;
 			}
 
-			irqstate_t flags = irqsave();
+			irqstate_t flags = px4_enter_critical_section();
 
 			if (!_reports->resize(arg)) {
-				irqrestore(flags);
+				px4_leave_critical_section(flags);
 				return -ENOMEM;
 			}
 
-			irqrestore(flags);
+			px4_leave_critical_section(flags);
 
 			return OK;
 		}
@@ -617,12 +609,12 @@ MB12XX::start()
 	work_queue(HPWORK, &_work, (worker_t)&MB12XX::cycle_trampoline, this, 5);
 
 	/* notify about state change */
-	struct subsystem_info_s info = {
-		true,
-		true,
-		true,
-		subsystem_info_s::SUBSYSTEM_TYPE_RANGEFINDER
-	};
+	struct subsystem_info_s info = {};
+	info.present = true;
+	info.enabled = true;
+	info.ok = true;
+	info.subsystem_type = subsystem_info_s::SUBSYSTEM_TYPE_RANGEFINDER;
+
 	static orb_advert_t pub = nullptr;
 
 	if (pub != nullptr) {
@@ -729,12 +721,6 @@ MB12XX::print_info()
  */
 namespace mb12xx
 {
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-const int ERROR = -1;
 
 MB12XX	*g_dev;
 
@@ -862,7 +848,7 @@ test()
 
 		warnx("periodic read %u", i);
 		warnx("valid %u", (float)report.current_distance > report.min_distance
-			&& (float)report.current_distance < report.max_distance ? 1 : 0);
+		      && (float)report.current_distance < report.max_distance ? 1 : 0);
 		warnx("measurement: %0.3f", (double)report.current_distance);
 		warnx("time:        %llu", report.timestamp);
 	}

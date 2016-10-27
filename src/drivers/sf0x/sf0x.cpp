@@ -77,19 +77,13 @@
 
 /* Configuration Constants */
 
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-static const int ERROR = -1;
-
 #ifndef CONFIG_SCHED_WORKQUEUE
 # error This requires CONFIG_SCHED_WORKQUEUE.
 #endif
 
 #define SF0X_CONVERSION_INTERVAL	83334
 #define SF0X_TAKE_RANGE_REG		'd'
-#define SF02F_MIN_DISTANCE		0.0f
+#define SF02F_MIN_DISTANCE		0.3f
 #define SF02F_MAX_DISTANCE		40.0f
 
 // designated SERIAL4/5 on Pixhawk
@@ -203,8 +197,8 @@ SF0X::SF0X(const char *port) :
 	_distance_sensor_topic(nullptr),
 	_consecutive_fail_count(0),
 	_sample_perf(perf_alloc(PC_ELAPSED, "sf0x_read")),
-	_comms_errors(perf_alloc(PC_COUNT, "sf0x_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "sf0x_buffer_overflows"))
+	_comms_errors(perf_alloc(PC_COUNT, "sf0x_com_err")),
+	_buffer_overflows(perf_alloc(PC_COUNT, "sf0x_buf_of"))
 {
 	/* store port name */
 	strncpy(_port, port, sizeof(_port));
@@ -227,6 +221,7 @@ SF0X::SF0X(const char *port) :
 
 	/* clear ONLCR flag (which appends a CR for every LF) */
 	uart_config.c_oflag &= ~ONLCR;
+
 	/* no parity, one stop bit */
 	uart_config.c_cflag &= ~(CSTOPB | PARENB);
 
@@ -281,10 +276,12 @@ SF0X::init()
 
 		/* do regular cdev init */
 		ret = CDev::init();
-		if (ret != OK) break;
+
+		if (ret != OK) { break; }
 
 		/* allocate basic report buffers */
 		_reports = new ringbuffer::RingBuffer(2, sizeof(distance_sensor_s));
+
 		if (_reports == nullptr) {
 			warnx("mem err");
 			ret = -1;
@@ -293,19 +290,17 @@ SF0X::init()
 
 		_class_instance = register_class_devname(RANGE_FINDER_BASE_DEVICE_PATH);
 
-		if (_class_instance == CLASS_DEVICE_PRIMARY) {
-			/* get a publish handle on the range finder topic */
-			struct distance_sensor_s ds_report = {};
+		/* get a publish handle on the range finder topic */
+		struct distance_sensor_s ds_report = {};
 
-			_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
-								     &_orb_class_instance, ORB_PRIO_HIGH);
+		_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
+					 &_orb_class_instance, ORB_PRIO_HIGH);
 
-			if (_distance_sensor_topic == nullptr) {
-				DEVICE_LOG("failed to create distance_sensor object. Did you start uOrb?");
-			}
+		if (_distance_sensor_topic == nullptr) {
+			DEVICE_LOG("failed to create distance_sensor object. Did you start uOrb?");
 		}
 
-	} while(0);
+	} while (0);
 
 	/* close the fd */
 	::close(_fd);
@@ -422,14 +417,14 @@ SF0X::ioctl(struct file *filp, int cmd, unsigned long arg)
 				return -EINVAL;
 			}
 
-			irqstate_t flags = irqsave();
+			irqstate_t flags = px4_enter_critical_section();
 
 			if (!_reports->resize(arg)) {
-				irqrestore(flags);
+				px4_leave_critical_section(flags);
 				return -ENOMEM;
 			}
 
-			irqrestore(flags);
+			px4_leave_critical_section(flags);
 
 			return OK;
 		}
@@ -570,6 +565,7 @@ SF0X::collect()
 		} else {
 			return -EAGAIN;
 		}
+
 	} else if (ret == 0) {
 		return -EAGAIN;
 	}
@@ -691,11 +687,13 @@ SF0X::cycle()
 			if (hrt_absolute_time() > 5 * 1000 * 1000LL && _consecutive_fail_count < 5) {
 				DEVICE_LOG("collection error #%u", _consecutive_fail_count);
 			}
+
 			_consecutive_fail_count++;
 
 			/* restart the measurement state machine */
 			start();
 			return;
+
 		} else {
 			/* apparently success */
 			_consecutive_fail_count = 0;
@@ -751,12 +749,6 @@ SF0X::print_info()
  */
 namespace sf0x
 {
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-const int ERROR = -1;
 
 SF0X	*g_dev;
 
@@ -886,7 +878,7 @@ test()
 
 		warnx("read #%u", i);
 		warnx("valid %u", (float)report.current_distance > report.min_distance
-			&& (float)report.current_distance < report.max_distance ? 1 : 0);
+		      && (float)report.current_distance < report.max_distance ? 1 : 0);
 		warnx("measurement:  %0.3f m", (double)report.current_distance);
 		warnx("time: %llu", report.timestamp);
 	}

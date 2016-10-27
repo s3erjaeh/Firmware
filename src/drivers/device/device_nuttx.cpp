@@ -91,11 +91,10 @@ Device::Device(const char *name,
 	_name(name),
 	_debug_enabled(false),
 	// private
-	_irq(irq),
-	_irq_attached(false)
+	_irq(irq)
 {
 	sem_init(&_lock, 0, 1);
-        
+
 	/* setup a default device ID. When bus_type is UNKNOWN the
 	   other fields are invalid */
 	_device_id.devid = 0;
@@ -109,8 +108,9 @@ Device::~Device()
 {
 	sem_destroy(&_lock);
 
-	if (_irq_attached)
+	if (_irq) {
 		unregister_interrupt(_irq);
+	}
 }
 
 int
@@ -126,28 +126,28 @@ Device::init()
 		/* register */
 		ret = register_interrupt(_irq, this);
 
-		if (ret != OK)
-			goto out;
-
-		_irq_attached = true;
+		if (ret != OK) {
+			_irq = 0;
+		}
 	}
 
-out:
 	return ret;
 }
 
 void
 Device::interrupt_enable()
 {
-	if (_irq_attached)
+	if (_irq) {
 		up_enable_irq(_irq);
+	}
 }
 
 void
 Device::interrupt_disable()
 {
-	if (_irq_attached)
+	if (_irq) {
 		up_disable_irq(_irq);
+	}
 }
 
 void
@@ -224,6 +224,7 @@ Device::ioctl(unsigned operation, unsigned &arg)
 	case DEVIOCGDEVICEID:
 		return (int)_device_id.devid;
 	}
+
 	return -ENODEV;
 }
 

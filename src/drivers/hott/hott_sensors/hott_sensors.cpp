@@ -43,6 +43,7 @@
 
 #include <fcntl.h>
 #include <px4_config.h>
+#include <px4_defines.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -56,12 +57,6 @@
 #include "../messages.h"
 
 #define DEFAULT_UART "/dev/ttyS0";		/**< USART1 */
-
-/* Oddly, ERROR is not defined for C++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-static const int ERROR = -1;
 
 static int thread_should_exit = false;		/**< Deamon exit flag */
 static int thread_running = false;		/**< Deamon status flag */
@@ -104,15 +99,16 @@ int
 recv_data(int uart, uint8_t *buffer, size_t *size, uint8_t *id)
 {
 	static const int timeout_ms = 1000;
-	
+
 	struct pollfd fds;
 	fds.fd = uart;
 	fds.events = POLLIN;
-	
+
 	// XXX should this poll be inside the while loop???
 	if (poll(&fds, 1, timeout_ms) > 0) {
 		int i = 0;
 		bool stop_byte_read = false;
+
 		while (true)  {
 			read(uart, &buffer[i], sizeof(buffer[i]));
 
@@ -121,15 +117,18 @@ recv_data(int uart, uint8_t *buffer, size_t *size, uint8_t *id)
 				*size = ++i;
 				return OK;
 			}
+
 			// XXX can some other field not have the STOP BYTE value?
 			if (buffer[i] == STOP_BYTE) {
 				*id = buffer[1];
 				stop_byte_read = true;
 			}
+
 			i++;
 		}
 	}
-	return ERROR;
+
+	return PX4_ERROR;
 }
 
 int
@@ -156,6 +155,7 @@ hott_sensors_thread_main(int argc, char *argv[])
 
 	/* enable UART, writes potentially an empty buffer, but multiplexing is disabled */
 	const int uart = open_uart(device);
+
 	if (uart < 0) {
 		errx(1, "Open fail, exiting.");
 		thread_running = false;
@@ -166,6 +166,7 @@ hott_sensors_thread_main(int argc, char *argv[])
 	uint8_t buffer[MAX_MESSAGE_BUFFER_SIZE];
 	size_t size = 0;
 	uint8_t id = 0;
+
 	while (!thread_should_exit) {
 		// Currently we only support a General Air Module sensor.
 		build_gam_request(&buffer[0], &size);
@@ -176,9 +177,10 @@ hott_sensors_thread_main(int argc, char *argv[])
 
 		recv_data(uart, &buffer[0], &size, &id);
 
-		// Determine which moduel sent it and process accordingly.
+		// Determine which module sent it and process accordingly.
 		if (id == GAM_SENSOR_ID) {
 			publish_gam_message(buffer);
+
 		} else {
 			warnx("Unknown sensor ID: %d", id);
 		}
@@ -210,11 +212,11 @@ hott_sensors_main(int argc, char *argv[])
 
 		thread_should_exit = false;
 		deamon_task = px4_task_spawn_cmd(daemon_name,
-					     SCHED_DEFAULT,
-					     SCHED_PRIORITY_DEFAULT,
-					     1024,
-					     hott_sensors_thread_main,
-					     (argv) ? (char * const *)&argv[2] : (char * const *)NULL);
+						 SCHED_DEFAULT,
+						 SCHED_PRIORITY_DEFAULT,
+						 1024,
+						 hott_sensors_thread_main,
+						 (argv) ? (char *const *)&argv[2] : (char *const *)NULL);
 		exit(0);
 	}
 

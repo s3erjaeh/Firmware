@@ -40,6 +40,7 @@
 #pragma once
 
 #include <px4_log.h>
+#include <math.h>
 
 /* Get the name of the default value fiven the param name */
 #define PX4_PARAM_DEFAULT_VALUE_NAME(_name) PARAM_##_name##_DEFAULT
@@ -92,14 +93,7 @@ typedef param_t px4_param_t;
  */
 #if defined(__PX4_NUTTX)
 
-#define PX4_ROOTFSDIR 
-
-/* XXX this is a hack to resolve conflicts with NuttX headers */
-#if !defined(__PX4_TESTS)
-#define isspace(c) \
-	((c) == ' '  || (c) == '\t' || (c) == '\n' || \
-	 (c) == '\r' || (c) == '\f' || c== '\v')
-#endif
+#define PX4_ROOTFSDIR
 
 #define _PX4_IOC(x,y) _IOC(x,y)
 
@@ -119,7 +113,11 @@ typedef param_t px4_param_t;
 #define PRId64 "lld"
 #endif
 
-/* 
+#if !defined(offsetof)
+#  define offsetof(TYPE, MEMBER) __builtin_offsetof (TYPE, MEMBER)
+#endif
+
+/*
  * POSIX Specific defines
  */
 #elif defined(__PX4_POSIX)
@@ -138,23 +136,31 @@ typedef param_t px4_param_t;
 
 /* FIXME - Used to satisfy build */
 //STM DocID018909 Rev 8 Sect 39.1 (Unique device ID Register)
-#define UNIQUE_ID       0x1FFF7A10  
+#define UNIQUE_ID       0x1FFF7A10
 #define STM32_SYSMEM_UID "SIMULATIONID"
 
 /* FIXME - Used to satisfy build */
 #define getreg32(a)    (*(volatile uint32_t *)(a))
 
+#ifdef __PX4_QURT
+#define PX4_TICKS_PER_SEC 1000L
+#else
 __BEGIN_DECLS
 extern long PX4_TICKS_PER_SEC;
 __END_DECLS
+#endif
 
 #define USEC_PER_TICK (1000000UL/PX4_TICKS_PER_SEC)
-#define USEC2TICK(x) (((x)+(USEC_PER_TICK/2))/USEC_PER_TICK) 
+#define USEC2TICK(x) (((x)+(USEC_PER_TICK/2))/USEC_PER_TICK)
 
 #define px4_statfs_buf_f_bavail_t unsigned long
 
 #if defined(__PX4_QURT)
-#define PX4_ROOTFSDIR 
+#define PX4_ROOTFSDIR
+#elif defined(__PX4_POSIX_EAGLE)
+#define PX4_ROOTFSDIR "/home/linaro"
+#elif defined(__PX4_POSIX_BEBOP)
+#define PX4_ROOTFSDIR "/home/root"
 #else
 #define PX4_ROOTFSDIR "rootfs"
 #endif
@@ -162,7 +168,7 @@ __END_DECLS
 #endif
 
 
-/* 
+/*
  * Defines for ROS and Linux
  */
 #if defined(__PX4_ROS) || defined(__PX4_POSIX)
@@ -172,8 +178,7 @@ __END_DECLS
 #define MAX_RAND 32767
 
 #if defined(__PX4_QURT)
-#define M_PI			3.14159265358979323846
-#define M_PI_2			1.57079632679489661923
+#include "dspal_math.h"
 __BEGIN_DECLS
 #include <math.h>
 __END_DECLS
@@ -212,6 +217,7 @@ __END_DECLS
 #ifndef __PX4_QURT
 
 #if defined(__cplusplus)
+#include <cmath>
 #define PX4_ISFINITE(x) std::isfinite(x)
 #else
 #define PX4_ISFINITE(x) isfinite(x)
@@ -222,7 +228,6 @@ __END_DECLS
 
 #if defined(__PX4_QURT)
 
-#define PX4_ROOTFSDIR 
 #define DEFAULT_PARAM_FILE "/fs/eeprom/parameters"
 
 #define SIOCDEVPRIVATE 999999
@@ -230,17 +235,9 @@ __END_DECLS
 // Missing math.h defines
 #define PX4_ISFINITE(x) __builtin_isfinite(x)
 
-// FIXME - these are missing for clang++ but not for clang
-#if defined(__cplusplus)
-#define isfinite(x) true
-#define isnan(x) false
-#define isinf(x) false
-#define fminf(x, y) ((x) > (y) ? y : x)
 #endif
 
-#endif
-
-/* 
+/*
  *Defines for all platforms
  */
 

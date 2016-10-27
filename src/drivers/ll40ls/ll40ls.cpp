@@ -70,17 +70,11 @@ extern "C" __EXPORT int ll40ls_main(int argc, char *argv[]);
 namespace ll40ls
 {
 
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-const int ERROR = -1;
-
 LidarLiteI2C	*g_dev_int;
 LidarLiteI2C	*g_dev_ext;
 LidarLitePWM	*g_dev_pwm;
 
-LidarLite * get_dev(const bool use_i2c, const int bus);
+LidarLite *get_dev(const bool use_i2c, const int bus);
 void	start(const bool use_i2c, const int bus);
 void	stop(const bool use_i2c, const int bus);
 void	test(const bool use_i2c, const int bus);
@@ -92,19 +86,25 @@ void	usage();
 /**
  * Get the correct device pointer
  */
-LidarLite * get_dev(const bool use_i2c, const int bus) {
-	LidarLite * g_dev = nullptr;
+LidarLite *get_dev(const bool use_i2c, const int bus)
+{
+	LidarLite *g_dev = nullptr;
+
 	if (use_i2c) {
-		g_dev = static_cast<LidarLite*>(bus == PX4_I2C_BUS_ONBOARD ? g_dev_int : g_dev_ext);
+		g_dev = static_cast<LidarLite *>(bus == PX4_I2C_BUS_EXPANSION ? g_dev_ext : g_dev_int);
+
 		if (g_dev == nullptr) {
 			errx(1, "i2c driver not running");
 		}
+
 	} else {
-		g_dev = static_cast<LidarLite*>(g_dev_pwm);
+		g_dev = static_cast<LidarLite *>(g_dev_pwm);
+
 		if (g_dev == nullptr) {
 			errx(1, "pwm driver not running");
 		}
 	}
+
 	return g_dev;
 };
 
@@ -114,7 +114,7 @@ LidarLite * get_dev(const bool use_i2c, const int bus) {
 void start(const bool use_i2c, const int bus)
 {
 	if (g_dev_int != nullptr || g_dev_ext != nullptr || g_dev_pwm != nullptr) {
-		errx(1,"driver already started");
+		errx(1, "driver already started");
 	}
 
 	if (use_i2c) {
@@ -126,7 +126,7 @@ void start(const bool use_i2c, const int bus)
 
 			g_dev_ext = new LidarLiteI2C(PX4_I2C_BUS_EXPANSION, LL40LS_DEVICE_PATH_EXT);
 
-			if (g_dev_ext != nullptr && OK != g_dev_ext->init()) {
+			if (g_dev_ext != nullptr && PX4_OK != g_dev_ext->init()) {
 				delete g_dev_ext;
 				g_dev_ext = nullptr;
 
@@ -146,7 +146,7 @@ void start(const bool use_i2c, const int bus)
 
 			g_dev_int = new LidarLiteI2C(PX4_I2C_BUS_ONBOARD, LL40LS_DEVICE_PATH_INT);
 
-			if (g_dev_int != nullptr && OK != g_dev_int->init()) {
+			if (g_dev_int != nullptr && PX4_OK != g_dev_int->init()) {
 				/* tear down the failing onboard instance */
 				delete g_dev_int;
 				g_dev_int = nullptr;
@@ -197,7 +197,7 @@ void start(const bool use_i2c, const int bus)
 	} else {
 		g_dev_pwm = new LidarLitePWM(LL40LS_DEVICE_PATH_PWM);
 
-		if (g_dev_pwm != nullptr && OK != g_dev_pwm->init()) {
+		if (g_dev_pwm != nullptr && PX4_OK != g_dev_pwm->init()) {
 			delete g_dev_pwm;
 			g_dev_pwm = nullptr;
 			warnx("failed to init PWM");
@@ -225,10 +225,14 @@ void start(const bool use_i2c, const int bus)
 
 fail:
 
+#ifdef PX4_I2C_BUS_ONBOARD
+
 	if (g_dev_int != nullptr && (bus == -1 || bus == PX4_I2C_BUS_ONBOARD)) {
 		delete g_dev_int;
 		g_dev_int = nullptr;
 	}
+
+#endif
 
 	if (g_dev_ext != nullptr && (bus == -1 || bus == PX4_I2C_BUS_EXPANSION)) {
 		delete g_dev_ext;
@@ -249,23 +253,26 @@ fail:
 void stop(const bool use_i2c, const int bus)
 {
 	if (use_i2c) {
-		if (bus == PX4_I2C_BUS_ONBOARD) {
-			if (g_dev_int != nullptr) {
-				delete g_dev_int;
-				g_dev_int = nullptr;
-			}
-		} else {
+		if (bus == PX4_I2C_BUS_EXPANSION) {
 			if (g_dev_ext != nullptr) {
 				delete g_dev_ext;
 				g_dev_ext = nullptr;
 			}
+
+		} else {
+			if (g_dev_int != nullptr) {
+				delete g_dev_int;
+				g_dev_int = nullptr;
+			}
 		}
+
 	} else {
 		if (g_dev_pwm != nullptr)  {
 			delete g_dev_pwm;
 			g_dev_pwm = nullptr;
 		}
 	}
+
 	exit(0);
 }
 
@@ -284,7 +291,7 @@ test(const bool use_i2c, const int bus)
 	const char *path;
 
 	if (use_i2c) {
-		path = ((bus == PX4_I2C_BUS_ONBOARD) ? LL40LS_DEVICE_PATH_INT : LL40LS_DEVICE_PATH_EXT);
+		path = ((bus == PX4_I2C_BUS_EXPANSION) ? LL40LS_DEVICE_PATH_EXT : LL40LS_DEVICE_PATH_INT);
 
 	} else {
 		path = LL40LS_DEVICE_PATH_PWM;
@@ -308,7 +315,7 @@ test(const bool use_i2c, const int bus)
 	warnx("time:        %lld", report.timestamp);
 
 	/* start the sensor polling at 2Hz */
-	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, 2)) {
+	if (PX4_OK != ioctl(fd, SENSORIOCSPOLLRATE, 2)) {
 		errx(1, "failed to set 2Hz poll rate");
 	}
 
@@ -334,13 +341,13 @@ test(const bool use_i2c, const int bus)
 
 		warnx("periodic read %u", i);
 		warnx("valid %u", (float)report.current_distance > report.min_distance
-			&& (float)report.current_distance < report.max_distance ? 1 : 0);
+		      && (float)report.current_distance < report.max_distance ? 1 : 0);
 		warnx("measurement: %0.3f m", (double)report.current_distance);
 		warnx("time:        %lld", report.timestamp);
 	}
 
 	/* reset the sensor polling to default rate */
-	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT)) {
+	if (PX4_OK != ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT)) {
 		errx(1, "failed to set default poll rate");
 	}
 
@@ -357,7 +364,7 @@ reset(const bool use_i2c, const int bus)
 	const char *path;
 
 	if (use_i2c) {
-		path = ((bus == PX4_I2C_BUS_ONBOARD) ? LL40LS_DEVICE_PATH_INT : LL40LS_DEVICE_PATH_EXT);
+		path = ((bus == PX4_I2C_BUS_EXPANSION) ? LL40LS_DEVICE_PATH_EXT : LL40LS_DEVICE_PATH_INT);
 
 	} else {
 		path = LL40LS_DEVICE_PATH_PWM;
@@ -386,7 +393,7 @@ reset(const bool use_i2c, const int bus)
 void
 info(const bool use_i2c, const int bus)
 {
-	LidarLite * g_dev = get_dev(use_i2c, bus);
+	LidarLite *g_dev = get_dev(use_i2c, bus);
 	printf("state @ %p\n", g_dev);
 	g_dev->print_info();
 	exit(0);
@@ -398,7 +405,7 @@ info(const bool use_i2c, const int bus)
 void
 regdump(const bool use_i2c, const int bus)
 {
-	LidarLite * g_dev = get_dev(use_i2c, bus);
+	LidarLite *g_dev = get_dev(use_i2c, bus);
 	printf("regdump @ %p\n", g_dev);
 	g_dev->print_registers();
 	exit(0);

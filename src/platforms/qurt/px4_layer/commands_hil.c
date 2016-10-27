@@ -37,10 +37,11 @@
  * @author Mark Charlebois <charlebm@gmail.com>
  */
 
+const char *get_commands(void);
 const char *get_commands()
 {
 
-	static const char *commands = 
+	static const char *commands =
 		"uorb start\n"
 		"param set CAL_GYRO0_ID 2293760\n"
 		"param set CAL_ACC0_ID 1310720\n"
@@ -50,7 +51,6 @@ const char *get_commands()
 //		"tone_alarm start\n"
 		"commander start -hil\n"
 		"sensors start\n"
-		//"ekf_att_pos_estimator start\n"
 		"attitude_estimator_q start\n"
 		"position_estimator_inav start\n"
 		"mc_pos_control start\n"
@@ -103,5 +103,5 @@ const char *get_commands()
 		;
 
 	return commands;
-  
+
 }

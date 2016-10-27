@@ -55,6 +55,9 @@
 
 #include "systemlib/systemlib.h"
 #include "systemlib/param/param.h"
+#if defined(FLASH_BASED_PARAMS)
+# include "systemlib/flashparams/flashparams.h"
+#endif
 #include "systemlib/err.h"
 
 __EXPORT int param_main(int argc, char *argv[]);
@@ -65,6 +68,7 @@ enum COMPARE_OPERATOR {
 };
 
 static int 	do_save(const char *param_file_name);
+static int	do_save_default(void);
 static int 	do_load(const char *param_file_name);
 static int	do_import(const char *param_file_name);
 static int	do_show(const char *search_string);
@@ -84,7 +88,7 @@ param_main(int argc, char *argv[])
 				return do_save(argv[2]);
 
 			} else {
-				if (param_save_default()) {
+				if (do_save_default()) {
 					warnx("Param export failed.");
 					return 1;
 
@@ -209,9 +213,38 @@ param_main(int argc, char *argv[])
 		}
 	}
 
-	warnx("expected a command, try 'load', 'import', 'show', 'set', 'compare',\n'index', 'index_used', 'select' or 'save'");
+	warnx("expected a command, try 'load', 'import', 'show', 'set', 'compare',\n'index', 'index_used', 'greater', 'select', 'save', or 'reset' ");
 	return 1;
 }
+
+#if defined(FLASH_BASED_PARAMS)
+/* If flash based parameters are uses we call out
+ * to the following set of flash routines
+ */
+static int
+
+do_save(const char *param_file_name)
+{
+	return flash_param_save();
+}
+static int
+do_save_default(void)
+{
+	return flash_param_save_default();
+}
+
+static int
+do_load(const char *param_file_name)
+{
+	return flash_param_load();
+}
+
+static int
+do_import(const char *param_file_name)
+{
+	return flash_param_import();
+}
+#else
 
 static int
 do_save(const char *param_file_name)
@@ -239,12 +272,18 @@ do_save(const char *param_file_name)
 }
 
 static int
+do_save_default(void)
+{
+	return param_save_default();
+}
+
+static int
 do_load(const char *param_file_name)
 {
 	int fd = open(param_file_name, O_RDONLY);
 
 	if (fd < 0) {
-		warn("open '%s'", param_file_name);
+		warn("open failed '%s'", param_file_name);
 		return 1;
 	}
 
@@ -279,6 +318,7 @@ do_import(const char *param_file_name)
 
 	return 0;
 }
+#endif
 
 static int
 do_show(const char *search_string)
@@ -431,10 +471,6 @@ do_set(const char *name, const char *val, bool fail_on_not_found)
 		return (fail_on_not_found) ? 1 : 0;
 	}
 
-	printf("%c %s: ",
-	       param_value_unsaved(param) ? '*' : (param_value_is_default(param) ? ' ' : '+'),
-	       param_name(param));
-
 	/*
 	 * Set parameter if type is known and conversion from string to value turns out fine
 	 */
@@ -447,12 +483,12 @@ do_set(const char *name, const char *val, bool fail_on_not_found)
 			char *end;
 			int32_t newval = strtol(val, &end, 10);
 
-			if (i == newval) {
-				printf("unchanged\n");
-
-			} else {
+			if (i != newval) {
+				printf("%c %s: ",
+				       param_value_unsaved(param) ? '*' : (param_value_is_default(param) ? ' ' : '+'),
+				       param_name(param));
 				printf("curr: %ld", (long)i);
-				param_set(param, &newval);
+				param_set_no_autosave(param, &newval);
 				printf(" -> new: %ld\n", (long)newval);
 			}
 		}
@@ -468,13 +504,13 @@ do_set(const char *name, const char *val, bool fail_on_not_found)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wfloat-equal"
 
-			if (f == newval) {
+			if (f != newval) {
 #pragma GCC diagnostic pop
-				printf("unchanged\n");
-
-			} else {
+				printf("%c %s: ",
+				       param_value_unsaved(param) ? '*' : (param_value_is_default(param) ? ' ' : '+'),
+				       param_name(param));
 				printf("curr: %4.4f", (double)f);
-				param_set(param, &newval);
+				param_set_no_autosave(param, &newval);
 				printf(" -> new: %4.4f\n", (double)newval);
 			}
 
@@ -487,7 +523,13 @@ do_set(const char *name, const char *val, bool fail_on_not_found)
 		return 1;
 	}
 
-	return 0;
+	if (param_save_default()) {
+		warnx("Param export failed.");
+		return 1;
+
+	} else {
+		return 0;
+	}
 }
 
 static int
@@ -523,7 +565,7 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 
 				if (((cmp_op == COMPARE_OPERATOR_EQUAL) && (i == j)) ||
 				    ((cmp_op == COMPARE_OPERATOR_GREATER) && (i > j))) {
-					printf(" %ld: ", (long)i);
+					PX4_DEBUG(" %ld: ", (long)i);
 					ret = 0;
 				}
 			}
@@ -543,7 +585,7 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 
 				if (((cmp_op == COMPARE_OPERATOR_EQUAL) && (fabsf(f - g) < 1e-7f)) ||
 				    ((cmp_op == COMPARE_OPERATOR_GREATER) && (f > g))) {
-					printf(" %4.4f: ", (double)f);
+					PX4_DEBUG(" %4.4f: ", (double)f);
 					ret = 0;
 				}
 			}
@@ -557,9 +599,9 @@ do_compare(const char *name, char *vals[], unsigned comparisons, enum COMPARE_OP
 	}
 
 	if (ret == 0) {
-		printf("%c %s: match\n",
-		       param_value_unsaved(param) ? '*' : (param_value_is_default(param) ? ' ' : '+'),
-		       param_name(param));
+		PX4_DEBUG("%c %s: match\n",
+			  param_value_unsaved(param) ? '*' : (param_value_is_default(param) ? ' ' : '+'),
+			  param_name(param));
 	}
 
 	return ret;

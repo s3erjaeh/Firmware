@@ -39,11 +39,13 @@
  * @author Mark Charlebois <charlebm@gmail.com>
  */
 
+#include "px4_log.h"
 #include <px4_time.h>
 #include <drivers/drv_hrt.h>
 #include "hrt_test.h"
 #include <unistd.h>
 #include <stdio.h>
+#include <cstring>
 
 px4::AppState HRTTest::appState;
 
@@ -54,6 +56,7 @@ static void timer_expired(void *arg)
 {
 	static int i = 0;
 	PX4_INFO("Test\n");
+
 	if (i < 5) {
 		i++;
 		hrt_call_after(&t1, update_interval, timer_expired, (void *)0);
@@ -79,7 +82,7 @@ int HRTTest::main()
 	memset(&t1, 0, sizeof(t1));
 
 	PX4_INFO("HRT_CALL %d\n", hrt_called(&t1));
-	
+
 	hrt_call_after(&t1, update_interval, timer_expired, (void *)0);
 	sleep(2);
 	PX4_INFO("HRT_CALL - %d\n", hrt_called(&t1));

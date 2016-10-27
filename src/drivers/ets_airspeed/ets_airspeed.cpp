@@ -162,7 +162,7 @@ ETSAirspeed::collect()
 		// caller could end up using this value as part of an
 		// average
 		perf_count(_comms_errors);
-		DEVICE_LOG("zero value from sensor"); 
+		DEVICE_LOG("zero value from sensor");
 		return -1;
 	}
 
@@ -264,12 +264,6 @@ ETSAirspeed::cycle()
  */
 namespace ets_airspeed
 {
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-const int ERROR = -1;
 
 ETSAirspeed	*g_dev;
 

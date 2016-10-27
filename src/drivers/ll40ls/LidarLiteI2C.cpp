@@ -40,6 +40,7 @@
  */
 
 #include "LidarLiteI2C.h"
+#include <px4_defines.h>
 #include <semaphore.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -47,12 +48,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <drivers/drv_hrt.h>
-
-/* oddly, ERROR is not defined for c++ */
-#ifdef ERROR
-# undef ERROR
-#endif
-static const int ERROR = -1;
 
 LidarLiteI2C::LidarLiteI2C(int bus, const char *path, int address) :
 	I2C("LL40LS", path, bus, address, 100000),
@@ -110,39 +105,37 @@ LidarLiteI2C::~LidarLiteI2C()
 
 int LidarLiteI2C::init()
 {
-	int ret = ERROR;
+	int ret = PX4_ERROR;
 
 	/* do I2C init (and probe) first */
 	if (I2C::init() != OK) {
-		goto out;
+		return ret;
 	}
 
 	/* allocate basic report buffers */
 	_reports = new ringbuffer::RingBuffer(2, sizeof(struct distance_sensor_s));
 
 	if (_reports == nullptr) {
-		goto out;
+		return ret;
 	}
 
 	_class_instance = register_class_devname(RANGE_FINDER_BASE_DEVICE_PATH);
 
-	if (_class_instance == CLASS_DEVICE_PRIMARY) {
-		/* get a publish handle on the range finder topic */
-		struct distance_sensor_s ds_report;
-		measure();
-		_reports->get(&ds_report);
-		_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
-							     &_orb_class_instance, ORB_PRIO_LOW);
+	/* get a publish handle on the range finder topic */
+	struct distance_sensor_s ds_report = {};
+	measure();
+	_reports->get(&ds_report);
+	_distance_sensor_topic = orb_advertise_multi(ORB_ID(distance_sensor), &ds_report,
+				 &_orb_class_instance, ORB_PRIO_LOW);
 
-		if (_distance_sensor_topic == nullptr) {
-			DEVICE_DEBUG("failed to create distance_sensor object. Did you start uOrb?");
-		}
+	if (_distance_sensor_topic == nullptr) {
+		DEVICE_DEBUG("failed to create distance_sensor object. Did you start uOrb?");
 	}
 
 	ret = OK;
 	/* sensor is ok, but we don't really know if it is within range */
 	_sensor_ok = true;
-out:
+
 	return ret;
 }
 
@@ -165,12 +158,16 @@ int LidarLiteI2C::lidar_transfer(const uint8_t *send, unsigned send_len, uint8_t
 {
 	if (send != NULL && send_len > 0) {
 		int ret = transfer(send, send_len, NULL, 0);
-		if (ret != OK)
+
+		if (ret != OK) {
 			return ret;
+		}
 	}
+
 	if (recv != NULL && recv_len > 0) {
 		return transfer(NULL, 0, recv, recv_len);
 	}
+
 	return OK;
 }
 
@@ -214,14 +211,14 @@ int LidarLiteI2C::ioctl(struct file *filp, int cmd, unsigned long arg)
 				return -EINVAL;
 			}
 
-			irqstate_t flags = irqsave();
+			irqstate_t flags = px4_enter_critical_section();
 
 			if (!_reports->resize(arg)) {
-				irqrestore(flags);
+				px4_leave_critical_section(flags);
 				return -ENOMEM;
 			}
 
-			irqrestore(flags);
+			px4_leave_critical_section(flags);
 
 			return OK;
 		}
@@ -345,8 +342,10 @@ int LidarLiteI2C::measure()
 int LidarLiteI2C::reset_sensor()
 {
 	int ret = write_reg(LL40LS_MEASURE_REG, LL40LS_MSRREG_RESET);
-	if (ret != OK)
+
+	if (ret != OK) {
 		return ret;
+	}
 
 	// wait for sensor reset to complete
 	usleep(1000);
@@ -447,7 +446,7 @@ int LidarLiteI2C::collect()
 	}
 
 	_last_distance = distance_cm;
-	
+
 
 	/* this should be fairly close to the end of the measurement, so the best approximation of the time */
 	report.timestamp = hrt_absolute_time();

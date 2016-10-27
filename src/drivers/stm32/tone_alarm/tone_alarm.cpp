@@ -116,6 +116,7 @@
 #include <stm32_tim.h>
 
 #include <systemlib/err.h>
+#include <systemlib/circuit_breaker.h>
 
 /* Check that tone alarm and HRT timers are different */
 #if defined(TONE_ALARM_TIMER)  && defined(HRT_TIMER)
@@ -273,6 +274,8 @@
 # define rDMAR    	REG(STM32_GTIM_DMAR_OFFSET)
 #endif
 
+#define CBRK_BUZZER_KEY 782097
+
 class ToneAlarm : public device::CDev
 {
 public:
@@ -287,6 +290,12 @@ public:
 	{
 		return _tune_names[tune];
 	}
+
+	enum {
+		CBRK_OFF = 0,
+		CBRK_ON,
+		CBRK_UNINIT
+	};
 
 private:
 	static const unsigned	_tune_max = 1024 * 8; // be reasonable about user tunes
@@ -307,6 +316,7 @@ private:
 	unsigned		_octave;
 	unsigned		_silence_length; // if nonzero, silence before next note
 	bool			_repeat;	// if true, tune restarts at end
+	int				_cbrk;	//if true, no audio output
 
 	hrt_call		_note_call;	// HRT callout for note completion
 
@@ -375,7 +385,8 @@ ToneAlarm::ToneAlarm() :
 	_default_tune_number(0),
 	_user_tune(nullptr),
 	_tune(nullptr),
-	_next(nullptr)
+	_next(nullptr),
+	_cbrk(CBRK_UNINIT)
 {
 	// enable debug() calls
 	//_debug_enabled = true;
@@ -428,7 +439,12 @@ ToneAlarm::init()
 	}
 
 	/* configure the GPIO to the idle state */
-	stm32_configgpio(GPIO_TONE_ALARM_IDLE);
+	px4_arch_configgpio(GPIO_TONE_ALARM_IDLE);
+
+#ifdef GPIO_TONE_ALARM_NEG
+
+	px4_arch_configgpio(GPIO_TONE_ALARM_NEG);
+#endif
 
 	/* clock/power on our timer */
 	modifyreg32(TONE_ALARM_CLOCK_POWER_REG, 0, TONE_ALARM_CLOCK_ENABLE);
@@ -537,6 +553,13 @@ ToneAlarm::rest_duration(unsigned rest_length, unsigned dots)
 void
 ToneAlarm::start_note(unsigned note)
 {
+	// check if circuit breaker is enabled
+	if (_cbrk == CBRK_UNINIT) {
+		_cbrk = circuit_breaker_enabled("CBRK_BUZZER", CBRK_BUZZER_KEY);
+	}
+
+	if (_cbrk != CBRK_OFF) { return; }
+
 	// compute the divisor
 	unsigned divisor = note_to_divisor(note);
 
@@ -553,7 +576,7 @@ ToneAlarm::start_note(unsigned note)
 	rCCER |= TONE_CCER;	// enable the output
 
 	// configure the GPIO to enable timer output
-	stm32_configgpio(GPIO_TONE_ALARM);
+	px4_arch_configgpio(GPIO_TONE_ALARM);
 }
 
 void
@@ -565,7 +588,7 @@ ToneAlarm::stop_note()
 	/*
 	 * Make sure the GPIO is not driving the speaker.
 	 */
-	stm32_configgpio(GPIO_TONE_ALARM_IDLE);
+	px4_arch_configgpio(GPIO_TONE_ALARM_IDLE);
 }
 
 void
@@ -858,7 +881,7 @@ ToneAlarm::ioctl(file *filp, int cmd, unsigned long arg)
 
 	DEVICE_DEBUG("ioctl %i %u", cmd, arg);
 
-//	irqstate_t flags = irqsave();
+//	irqstate_t flags = px4_enter_critical_section();
 
 	/* decide whether to increase the alarm level to cmd or leave it alone */
 	switch (cmd) {
@@ -893,7 +916,7 @@ ToneAlarm::ioctl(file *filp, int cmd, unsigned long arg)
 		break;
 	}
 
-//	irqrestore(flags);
+//	px4_leave_critical_section(flags);
 
 	/* give it to the superclass if we didn't like it */
 	if (result == -ENOTTY) {

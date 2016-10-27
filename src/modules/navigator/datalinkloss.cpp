@@ -42,7 +42,7 @@
 #include <math.h>
 #include <fcntl.h>
 
-#include <mavlink/mavlink_log.h>
+#include <systemlib/mavlink_log.h>
 #include <systemlib/err.h>
 #include <geo/geo.h>
 #include <navigator/navigation.h>
@@ -124,11 +124,9 @@ DataLinkLoss::set_dll_item()
 		_mission_item.altitude = _param_commsholdalt.get();
 		_mission_item.yaw = NAN;
 		_mission_item.loiter_radius = _navigator->get_loiter_radius();
-		_mission_item.loiter_direction = 1;
 		_mission_item.nav_cmd = NAV_CMD_LOITER_TIME_LIMIT;
 		_mission_item.acceptance_radius = _navigator->get_acceptance_radius();
 		_mission_item.time_inside = _param_commsholdwaittime.get() < 0.0f ? 0.0f : _param_commsholdwaittime.get();
-		_mission_item.pitch_min = 0.0f;
 		_mission_item.autocontinue = true;
 		_mission_item.origin = ORIGIN_ONBOARD;
 
@@ -142,11 +140,9 @@ DataLinkLoss::set_dll_item()
 		_mission_item.altitude = _param_airfieldhomealt.get();
 		_mission_item.yaw = NAN;
 		_mission_item.loiter_radius = _navigator->get_loiter_radius();
-		_mission_item.loiter_direction = 1;
 		_mission_item.nav_cmd = NAV_CMD_LOITER_TIME_LIMIT;
 		_mission_item.time_inside = _param_airfieldhomewaittime.get() < 0.0f ? 0.0f : _param_airfieldhomewaittime.get();
 		_mission_item.acceptance_radius = _navigator->get_acceptance_radius();
-		_mission_item.pitch_min = 0.0f;
 		_mission_item.autocontinue = true;
 		_mission_item.origin = ORIGIN_ONBOARD;
 
@@ -187,7 +183,7 @@ DataLinkLoss::advance_dll()
 		if (_navigator->get_vstatus()->data_link_lost_counter > _param_numberdatalinklosses.get()) {
 			warnx("%d data link losses, limit is %d, fly to airfield home",
 					_navigator->get_vstatus()->data_link_lost_counter, _param_numberdatalinklosses.get());
-			mavlink_log_critical(_navigator->get_mavlink_fd(), "too many DL losses, fly to airfield home");
+			mavlink_log_critical(_navigator->get_mavlink_log_pub(), "too many DL losses, fly to airfield home");
 			_navigator->get_mission_result()->stay_in_failsafe = true;
 			_navigator->set_mission_result_updated();
 			reset_mission_item_reached();
@@ -195,19 +191,19 @@ DataLinkLoss::advance_dll()
 		} else {
 			if (!_param_skipcommshold.get()) {
 				warnx("fly to comms hold, datalink loss counter: %d", _navigator->get_vstatus()->data_link_lost_counter);
-				mavlink_log_critical(_navigator->get_mavlink_fd(), "fly to comms hold");
+				mavlink_log_critical(_navigator->get_mavlink_log_pub(), "fly to comms hold");
 				_dll_state = DLL_STATE_FLYTOCOMMSHOLDWP;
 			} else {
 				/* comms hold wp not active, fly to airfield home directly */
 				warnx("Skipping comms hold wp. Flying directly to airfield home");
-				mavlink_log_critical(_navigator->get_mavlink_fd(), "fly to airfield home, comms hold skipped");
+				mavlink_log_critical(_navigator->get_mavlink_log_pub(), "fly to airfield home, comms hold skipped");
 				_dll_state = DLL_STATE_FLYTOAIRFIELDHOMEWP;
 			}
 		}
 		break;
 	case DLL_STATE_FLYTOCOMMSHOLDWP:
 		warnx("fly to airfield home");
-			mavlink_log_critical(_navigator->get_mavlink_fd(), "fly to airfield home");
+			mavlink_log_critical(_navigator->get_mavlink_log_pub(), "fly to airfield home");
 		_dll_state = DLL_STATE_FLYTOAIRFIELDHOMEWP;
 		_navigator->get_mission_result()->stay_in_failsafe = true;
 		_navigator->set_mission_result_updated();
@@ -216,7 +212,7 @@ DataLinkLoss::advance_dll()
 	case DLL_STATE_FLYTOAIRFIELDHOMEWP:
 		_dll_state = DLL_STATE_TERMINATE;
 		warnx("time is up, state should have been changed manually by now");
-		mavlink_log_critical(_navigator->get_mavlink_fd(), "no manual control, terminating");
+		mavlink_log_critical(_navigator->get_mavlink_log_pub(), "no manual control, terminating");
 		_navigator->get_mission_result()->stay_in_failsafe = true;
 		_navigator->set_mission_result_updated();
 		reset_mission_item_reached();
